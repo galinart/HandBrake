@@ -39,7 +39,7 @@ jobs:
         make pkg.create
     
     - name: Upload Assets
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3
       with:
         name: HandBrake-macos
         path: ./build/pkg

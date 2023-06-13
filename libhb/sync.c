@@ -390,7 +390,7 @@ static hb_buffer_t * CreateBlackBuf( sync_stream_t * stream,
             buf->f.color_range = stream->common->job->color_range;
             buf->f.chroma_location = stream->common->job->chroma_location;
 #if HB_PROJECT_FEATURE_QSV
-            if (hb_qsv_full_path_is_enabled(stream->common->job) && !hb_qsv_hw_filters_are_enabled(stream->common->job))
+            if (hb_qsv_get_memory_type(stream->common->job) == MFX_IOPATTERN_OUT_VIDEO_MEMORY && !(hb_qsv_hw_filters_via_video_memory_are_enabled(stream->common->job)))
             {
                 hb_qsv_attach_surface_to_video_buffer(stream->common->job, buf, 0);
             }
@@ -404,7 +404,7 @@ static hb_buffer_t * CreateBlackBuf( sync_stream_t * stream,
         else
         {
 #if HB_PROJECT_FEATURE_QSV
-            if (hb_qsv_full_path_is_enabled(stream->common->job) && !hb_qsv_hw_filters_are_enabled(stream->common->job))
+            if (hb_qsv_get_memory_type(stream->common->job) == MFX_IOPATTERN_OUT_VIDEO_MEMORY && !(hb_qsv_hw_filters_via_video_memory_are_enabled(stream->common->job)))
             {
                 hb_buffer_t *temp = hb_buffer_dup(buf);
                 hb_qsv_copy_video_buffer_to_video_buffer(stream->common->job, buf, temp, 0);

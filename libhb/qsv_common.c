@@ -144,10 +144,19 @@ static const char * const hb_qsv_av1_profiles_names[] =
 };
 static hb_triplet_t hb_qsv_vpp_scale_modes[] =
 {
-    { "lowpower",          "low_power",         MFX_SCALING_MODE_LOWPOWER, },
-    { "hq",                "hq",                MFX_SCALING_MODE_QUALITY,  },
+    { "auto",              "0",         MFX_SCALING_MODE_DEFAULT,  },
+    { "lowpower",          "1",         MFX_SCALING_MODE_LOWPOWER, },
+    { "hq",                "2",         MFX_SCALING_MODE_QUALITY,  },
     { NULL,                                                                },
 };
+
+static hb_triplet_t hb_qsv_memory_types[] =
+{
+    { "System memory",         "system",        MFX_IOPATTERN_OUT_SYSTEM_MEMORY, },
+    { "Video memory",          "video",         MFX_IOPATTERN_OUT_VIDEO_MEMORY,  },
+    { NULL,                                                                      },
+};
+
 static hb_triplet_t hb_qsv_vpp_interpolation_methods[] =
 {
     { "nearest",            "nearest",          MFX_INTERPOLATION_NEAREST_NEIGHBOR, },
@@ -2152,6 +2161,21 @@ static int hb_qsv_parse_options(hb_job_t *job)
                     job->qsv.async_depth = async_depth;
                 }
             }
+#if defined(_WIN32) || defined(__MINGW32__)
+            else if (!strcasecmp(key, "memory-type"))
+            {
+                hb_triplet_t *mode = NULL;
+                mode = hb_triplet4key(hb_qsv_memory_types, hb_value_get_string_xform(value));
+                if (!mode)
+                {
+                    err = HB_QSV_PARAM_BAD_VALUE;
+                }
+                else
+                {
+                    job->qsv.ctx->memory_type = mode->value;
+                }
+            }
+#endif
         }
         hb_dict_free(&options_list);
     }
@@ -2191,9 +2215,14 @@ int hb_qsv_decode_is_enabled(hb_job_t *job)
             qsv_decode_is_codec_supported;
 }
 
-int hb_qsv_hw_filters_are_enabled(hb_job_t *job)
+int hb_qsv_hw_filters_via_video_memory_are_enabled(hb_job_t *job)
 {
-    return job && job->qsv.ctx && job->qsv.ctx->qsv_hw_filters_are_enabled;
+    return job && job->qsv.ctx && job->qsv.ctx->qsv_hw_filters_via_video_memory_are_enabled;
+}
+
+int hb_qsv_hw_filters_via_system_memory_are_enabled(hb_job_t *job)
+{
+    return job && job->qsv.ctx && job->qsv.ctx->qsv_hw_filters_via_system_memory_are_enabled;
 }
 
 int hb_qsv_is_enabled(hb_job_t *job)
@@ -2201,15 +2230,47 @@ int hb_qsv_is_enabled(hb_job_t *job)
     return hb_qsv_decode_is_enabled(job) || hb_qsv_encoder_info_get(hb_qsv_get_adapter_index(), job->vcodec);
 }
 
+int hb_qsv_map_sw_to_hw_format(int pix_fmt)
+{
+    int bit_depth = hb_get_bit_depth(pix_fmt);
+    switch (bit_depth)
+    {
+        case 10:
+            return AV_PIX_FMT_P010;
+        case 8:
+        default:
+            return AV_PIX_FMT_NV12;
+    }
+}
+
+int hb_qsv_get_memory_type(hb_job_t *job)
+{
+    int qsv_full_path_is_enabled = hb_qsv_full_path_is_enabled(job);
+
+    if (qsv_full_path_is_enabled)
+    {
+        if (job->qsv.ctx->memory_type == MFX_IOPATTERN_OUT_VIDEO_MEMORY)
+            return MFX_IOPATTERN_OUT_VIDEO_MEMORY;
+        else if (job->qsv.ctx->memory_type == MFX_IOPATTERN_OUT_SYSTEM_MEMORY)
+            return MFX_IOPATTERN_OUT_SYSTEM_MEMORY;
+    }
+
+    return qsv_full_path_is_enabled ? MFX_IOPATTERN_OUT_VIDEO_MEMORY : MFX_IOPATTERN_OUT_SYSTEM_MEMORY;
+}
+
 int hb_qsv_full_path_is_enabled(hb_job_t *job)
 {
     int qsv_full_path_is_enabled = 0;
+    if(!job || !job->qsv.ctx)
+    {
+        return 0;
+    }
 #if defined(_WIN32) || defined(__MINGW32__)
     hb_qsv_info_t *info = hb_qsv_encoder_info_get(hb_qsv_get_adapter_index(), job->vcodec);
     int title_bit_depth = hb_get_bit_depth(job->title->pix_fmt);
     int encoder_bit_depth = hb_video_encoder_get_depth(job->vcodec);
 
-    if (encoder_bit_depth != title_bit_depth)
+    if (encoder_bit_depth > title_bit_depth)
     {
         return 0;
     }
@@ -2842,6 +2903,19 @@ int hb_qsv_param_parse(hb_qsv_param_t *param, hb_qsv_info_t *info, hb_job_t *job
     else if (!strcasecmp(key, "gpu"))
     {
         // Already parsed in QSV initialization
+    }
+    else if (!strcasecmp(key, "memory-type"))
+    {
+        // Check if was parsed already in decoder initialization
+        if (job->qsv.ctx && !job->qsv.ctx->memory_type)
+        {
+            hb_triplet_t* mode = NULL;
+            mode = hb_triplet4key(hb_qsv_memory_types, value);
+            if (!mode)
+                error = HB_QSV_PARAM_BAD_VALUE;
+            else
+                job->qsv.ctx->memory_type = mode->value;
+        }
     }
     else if (!strcasecmp(key, "scalingmode") ||
              !strcasecmp(key, "vpp-sm"))
@@ -4141,11 +4215,11 @@ int hb_qsv_copy_video_buffer_to_video_buffer(hb_job_t *job, hb_buffer_t* in, hb_
     return 0;
 }
 
-hb_buffer_t* hb_qsv_copy_avframe_to_video_buffer(hb_job_t *job, AVFrame *frame, const int is_vpp)
+hb_buffer_t* hb_qsv_copy_avframe_to_video_buffer(hb_job_t *job, AVFrame *frame, const int is_vpp, AVRational time_base)
 {
     hb_buffer_t *out;
     out = hb_frame_buffer_init(frame->format, frame->width, frame->height);
-    hb_avframe_set_video_buffer_flags(out, frame, (AVRational){1,1});
+    hb_avframe_set_video_buffer_flags(out, frame, time_base);
 
     // alloc new frame
     out->qsv_details.frame = av_frame_alloc();
@@ -4178,7 +4252,7 @@ hb_buffer_t* hb_qsv_copy_avframe_to_video_buffer(hb_job_t *job, AVFrame *frame, 
         hb_qsv_frames_ctx = job->qsv.ctx->hb_dec_qsv_frames_ctx;
     }
 
-    if (!is_vpp && hb_qsv_hw_filters_are_enabled(job))
+    if (!is_vpp && hb_qsv_hw_filters_via_video_memory_are_enabled(job))
     {
         ret = hb_qsv_get_free_surface_from_pool(hb_qsv_frames_ctx, out->qsv_details.frame, &mid);
         if (ret < 0)
@@ -4201,7 +4275,7 @@ hb_buffer_t* hb_qsv_copy_avframe_to_video_buffer(hb_job_t *job, AVFrame *frame, 
         *output_surface = *input_surface;
         output_surface->Info.CropW = frame->width;
         output_surface->Info.CropH = frame->height;
-        if (hb_qsv_hw_filters_are_enabled(job))
+        if (hb_qsv_hw_filters_via_video_memory_are_enabled(job))
         {
             // Make sure that we pass handle_pair to scale_qsv
             output_surface->Data.MemId = mid->handle_pair;
@@ -4360,7 +4434,8 @@ int hb_create_ffmpeg_pool(hb_job_t *job, int coded_width, int coded_height, enum
                 iter  = hb_dict_iter_next(options_list, iter))
             {
                 const char *key = hb_dict_iter_key(iter);
-                if ((!strcasecmp(key, "scalingmode") || !strcasecmp(key, "vpp-sm")) && hb_qsv_hw_filters_are_enabled(job))
+                if ((!strcasecmp(key, "scalingmode") || !strcasecmp(key, "vpp-sm")) && (hb_qsv_hw_filters_via_video_memory_are_enabled(job) ||
+                      hb_qsv_hw_filters_via_system_memory_are_enabled(job)))
                 {
                     hb_qsv_info_t *info = hb_qsv_encoder_info_get(hb_qsv_get_adapter_index(), job->vcodec);
                     if (info && (info->capabilities & HB_QSV_CAP_VPP_SCALING))
@@ -4378,7 +4453,8 @@ int hb_create_ffmpeg_pool(hb_job_t *job, int coded_width, int coded_height, enum
                         }
                     }
                 }
-                if ((!strcasecmp(key, "interpolationmethod") || !strcasecmp(key, "vpp-im")) && hb_qsv_hw_filters_are_enabled(job))
+                if ((!strcasecmp(key, "interpolationmethod") || !strcasecmp(key, "vpp-im")) && (hb_qsv_hw_filters_via_video_memory_are_enabled(job) ||
+                      hb_qsv_hw_filters_via_system_memory_are_enabled(job)))
                 {
                     hb_qsv_info_t *info = hb_qsv_encoder_info_get(hb_qsv_get_adapter_index(), job->vcodec);
                     if (info && (info->capabilities & HB_QSV_CAP_VPP_INTERPOLATION))
@@ -4510,7 +4586,7 @@ enum AVPixelFormat hb_qsv_get_format(AVCodecContext *s, const enum AVPixelFormat
     // Find end of list.
     for (n = 0; pix_fmts[n] != AV_PIX_FMT_NONE; n++);
     // if not full path, take the system format, it must be the last entry
-    if (!hb_qsv_full_path_is_enabled(job))
+    if (hb_qsv_get_memory_type(job) == MFX_IOPATTERN_OUT_SYSTEM_MEMORY)
         return pix_fmts[n - 1];
 
     while (*pix_fmts != AV_PIX_FMT_NONE) {
@@ -4574,9 +4650,12 @@ int hb_qsv_sanitize_filter_list(hb_job_t *job)
                 }
             }
         }
+
         job->qsv.ctx->num_sw_filters = num_sw_filters;
-        job->qsv.ctx->qsv_hw_filters_are_enabled = ((num_hw_filters > 0) && hb_qsv_full_path_is_enabled(job)) ? 1 : 0;
-        if (job->qsv.ctx->qsv_hw_filters_are_enabled)
+        job->qsv.ctx->qsv_hw_filters_via_system_memory_are_enabled = (num_hw_filters > 0) && hb_qsv_full_path_is_enabled(job) && hb_qsv_get_memory_type(job) == MFX_IOPATTERN_OUT_SYSTEM_MEMORY ? 1 : 0;
+        job->qsv.ctx->qsv_hw_filters_via_video_memory_are_enabled  = (num_hw_filters > 0) && hb_qsv_full_path_is_enabled(job) && hb_qsv_get_memory_type(job) == MFX_IOPATTERN_OUT_VIDEO_MEMORY  ? 1 : 0;
+
+        if (job->qsv.ctx->qsv_hw_filters_via_video_memory_are_enabled || job->qsv.ctx->qsv_hw_filters_via_system_memory_are_enabled)
         {
             job->qsv.ctx->hb_vpp_qsv_frames_ctx = av_mallocz(sizeof(HBQSVFramesContext));
             if (!job->qsv.ctx->hb_vpp_qsv_frames_ctx)
@@ -4688,7 +4767,7 @@ void hb_qsv_context_uninit(hb_job_t *job)
         return;
     }
     /* QSV context cleanup and MFXClose */
-    hb_qsv_context_clean(ctx, hb_qsv_full_path_is_enabled(job));
+    hb_qsv_context_clean(ctx, hb_qsv_get_memory_type(job) == MFX_IOPATTERN_OUT_VIDEO_MEMORY);
     av_free(ctx);
     job->qsv.ctx = NULL;
 

@@ -100,6 +100,14 @@ static int crop_scale_init(hb_filter_object_t * filter, hb_filter_init_t * init)
 #if HB_PROJECT_FEATURE_QSV && (defined( _WIN32 ) || defined( __MINGW32__ ))
     if (hb_qsv_hw_filters_via_system_memory_are_enabled(init->job) || hb_qsv_hw_filters_via_video_memory_are_enabled(init->job))
     {
+        //If the hw encoder and hw decoder bits do not match, you need to specify the output frame format
+        char* format = NULL;
+        hb_dict_extract_string(&format, settings, "format");
+        if (format != NULL)
+        {
+            hb_dict_set_string(avsettings, "format", format);
+            init->pix_fmt = av_get_pix_fmt(format);
+        }
         if (hb_qsv_hw_filters_via_video_memory_are_enabled(init->job))
         {
             int result = hb_create_ffmpeg_pool(init->job, width, height, init->pix_fmt, HB_QSV_POOL_SURFACE_SIZE, 0, &init->job->qsv.ctx->hb_vpp_qsv_frames_ctx->hw_frames_ctx);

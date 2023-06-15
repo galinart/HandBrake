@@ -1403,9 +1403,25 @@ static void sanitize_filter_list_pre(hb_job_t *job, hb_geometry_t src_geo)
             if ( (src_geo.width == width) && (src_geo.height == height) &&
                 (top == 0) && (bottom == 0 ) && (left == 0) && (right == 0) )
             {
-                hb_list_rem(list, filter);
-                hb_filter_close(&filter);
-                hb_log("work: skipping crop/scale filter");
+#if HB_PROJECT_FEATURE_QSV
+                if (hb_qsv_full_path_is_enabled(job))
+                {
+                    int title_bit_depth = hb_get_bit_depth(job->title->pix_fmt);
+                    int pix_fmt_bit_depth = hb_video_encoder_get_depth(job->vcodec);
+                    if (title_bit_depth == pix_fmt_bit_depth)
+                    {
+                        hb_list_rem(list, filter);
+                        hb_filter_close(&filter);
+                        hb_log("Skipping crop/scale filter");
+                    }
+                }
+                else
+#endif
+                {
+                    hb_list_rem(list, filter);
+                    hb_filter_close(&filter);
+                    hb_log("work: skipping crop/scale filter");
+                }
             }
         }
     }
@@ -1429,7 +1445,7 @@ static void sanitize_filter_list_post(hb_job_t *job)
     }
 #endif
 
-    if (job->hw_pix_fmt == AV_PIX_FMT_NONE &&
+    if ((job->hw_pix_fmt == AV_PIX_FMT_NONE || job->hw_pix_fmt == AV_PIX_FMT_QSV) &&
         hb_video_encoder_pix_fmt_is_supported(job->vcodec, job->input_pix_fmt, job->encoder_profile) == 0)
     {
         // Some encoders require a specific input pixel format
@@ -1453,10 +1469,25 @@ static void sanitize_filter_list_post(hb_job_t *job)
             encoder_pix_fmts++;
         }
 
-        hb_filter_object_t *filter = hb_filter_init(HB_FILTER_FORMAT);
-        char *settings = hb_strdup_printf("format=%s", av_get_pix_fmt_name(encoder_pix_fmt));
-        hb_add_filter(job, filter, settings);
-        free(settings);
+#if HB_PROJECT_FEATURE_QSV && (defined( _WIN32 ) || defined( __MINGW32__ ))
+        if (hb_qsv_full_path_is_enabled(job))
+        {
+            hb_list_t* list = job->list_filter;
+            hb_filter_object_t *filter = hb_filter_find(list, HB_FILTER_CROP_SCALE);
+            if (filter)
+            {
+                hb_dict_t* settings = filter->settings;
+                hb_dict_set_string(settings, "format", av_get_pix_fmt_name(encoder_pix_fmt));
+            }
+        }
+        else
+#endif
+        {
+            hb_filter_object_t *filter = hb_filter_init(HB_FILTER_FORMAT);
+            char *settings = hb_strdup_printf("format=%s", av_get_pix_fmt_name(encoder_pix_fmt));
+            hb_add_filter(job, filter, settings);
+            free(settings);
+        }
     }
 }
 

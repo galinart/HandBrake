@@ -2230,19 +2230,6 @@ int hb_qsv_is_enabled(hb_job_t *job)
     return hb_qsv_decode_is_enabled(job) || hb_qsv_encoder_info_get(hb_qsv_get_adapter_index(), job->vcodec);
 }
 
-int hb_qsv_map_sw_to_hw_format(int pix_fmt)
-{
-    int bit_depth = hb_get_bit_depth(pix_fmt);
-    switch (bit_depth)
-    {
-        case 10:
-            return AV_PIX_FMT_P010;
-        case 8:
-        default:
-            return AV_PIX_FMT_NV12;
-    }
-}
-
 int hb_qsv_get_memory_type(hb_job_t *job)
 {
     int qsv_full_path_is_enabled = hb_qsv_full_path_is_enabled(job);

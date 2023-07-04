@@ -1189,11 +1189,20 @@ int encqsvInit(hb_work_object_t *w, hb_job_t *job)
     pv->param.videoParam->AsyncDepth = job->qsv.async_depth;
 
     // set and enable colorimetry (video signal information)
-    pv->param.videoSignalInfo.ColourPrimaries          = hb_output_color_prim(job);
-    pv->param.videoSignalInfo.TransferCharacteristics  = hb_output_color_transfer(job);
-    pv->param.videoSignalInfo.MatrixCoefficients       = hb_output_color_matrix(job);
-    pv->param.videoSignalInfo.ColourDescriptionPresent = 1;
+    pv->param.videoSignalInfo.VideoFullRange = (pv->job->qsv.ctx->out_range == AVCOL_RANGE_JPEG);
 
+    if ((hb_output_color_prim(job)     != HB_COLR_PRI_UNDEF ||
+         hb_output_color_transfer(job) != HB_COLR_TRA_UNDEF ||
+         hb_output_color_matrix(job)   != HB_COLR_MAT_UNDEF) &&
+         !(pv->job->qsv.ctx->tonemap == 1 &&
+           (hb_qsv_hw_filters_via_video_memory_are_enabled(job) ||
+           hb_qsv_hw_filters_via_system_memory_are_enabled(job))))
+    {
+        pv->param.videoSignalInfo.ColourPrimaries          = hb_output_color_prim(job);
+        pv->param.videoSignalInfo.TransferCharacteristics  = hb_output_color_transfer(job);
+        pv->param.videoSignalInfo.MatrixCoefficients       = hb_output_color_matrix(job);
+        pv->param.videoSignalInfo.ColourDescriptionPresent = 1;
+    }
     if (job->chroma_location != AVCHROMA_LOC_UNSPECIFIED)
     {
         pv->param.chromaLocInfo.ChromaSampleLocTypeBottomField =

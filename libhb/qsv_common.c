@@ -157,6 +157,13 @@ static hb_triplet_t hb_qsv_memory_types[] =
     { NULL,                                                                      },
 };
 
+static hb_triplet_t hb_qsv_out_range_types[] =
+{
+    { "Limited range",         "limited",        AVCOL_RANGE_MPEG, },
+    { "Full range",            "full",           AVCOL_RANGE_JPEG, },
+    { NULL,                                                                      },
+};
+
 static hb_triplet_t hb_qsv_vpp_interpolation_methods[] =
 {
     { "nearest",            "nearest",          MFX_INTERPOLATION_NEAREST_NEIGHBOR, },
@@ -2175,6 +2182,28 @@ static int hb_qsv_parse_options(hb_job_t *job)
                     job->qsv.ctx->memory_type = mode->value;
                 }
             }
+            else if (!strcasecmp(key, "out_range"))
+            {
+                hb_triplet_t* mode = NULL;
+                mode = hb_triplet4key(hb_qsv_out_range_types, hb_value_get_string_xform(value));
+                if (!mode)
+                {
+                    err = HB_QSV_PARAM_BAD_VALUE;
+                }
+                else
+                {
+                    job->qsv.ctx->out_range = mode->value;
+                }
+            }
+            else if (!strcasecmp(key, "tonemap"))
+            {
+                int ivalue = hb_qsv_atobool(hb_value_get_string_xform(value), &err);
+
+                if (!err)
+                {
+                    job->qsv.ctx->tonemap = ivalue ? 1 : 0;
+                }
+            }
 #endif
         }
         hb_dict_free(&options_list);
@@ -2254,19 +2283,6 @@ int hb_qsv_full_path_is_enabled(hb_job_t *job)
     }
 #if defined(_WIN32) || defined(__MINGW32__)
     hb_qsv_info_t *info = hb_qsv_encoder_info_get(hb_qsv_get_adapter_index(), job->vcodec);
-    int title_bit_depth = hb_get_bit_depth(job->title->pix_fmt);
-    int encoder_bit_depth = hb_video_encoder_get_depth(job->vcodec);
-
-    if (encoder_bit_depth > title_bit_depth)
-    {
-        return 0;
-    }
-
-    // vpp_qsv filter can't convert from full to limited range, fallback to sw filters until unsupported
-    if (job->title->color_range == AVCOL_RANGE_JPEG)
-    {
-        return 0;
-    }
 
     // there isn't any rotate hw filter yet, fallback to sw filters
     if (job->title->rotation)
@@ -2623,31 +2639,6 @@ int hb_qsv_param_parse(hb_qsv_param_t *param, hb_qsv_info_t *info, hb_job_t *job
             param->videoSignalInfo.VideoFormat = ivalue;
         }
     }
-    else if (!strcasecmp(key, "fullrange"))
-    {
-        if (info->capabilities & HB_QSV_CAP_VUI_VSINFO)
-        {
-            switch (info->codec_id)
-            {
-                case MFX_CODEC_AVC:
-                    ivalue = hb_qsv_atoindex(hb_h264_fullrange_names, value, &error);
-                    break;
-                case MFX_CODEC_HEVC:
-                    ivalue = hb_qsv_atoindex(hb_h265_fullrange_names, value, &error);
-                    break;
-                default:
-                    return HB_QSV_PARAM_UNSUPPORTED;
-            }
-        }
-        else
-        {
-            return HB_QSV_PARAM_UNSUPPORTED;
-        }
-        if (!error)
-        {
-            param->videoSignalInfo.VideoFullRange = ivalue;
-        }
-    }
     else if (!strcasecmp(key, "colorprim"))
     {
         if (info->capabilities & HB_QSV_CAP_VUI_VSINFO)
@@ -2903,6 +2894,14 @@ int hb_qsv_param_parse(hb_qsv_param_t *param, hb_qsv_info_t *info, hb_job_t *job
             else
                 job->qsv.ctx->memory_type = mode->value;
         }
+    }
+    else if (!strcasecmp(key, "tonemap"))
+    {
+        // Already parsed in QSV initialization
+    }
+    else if (!strcasecmp(key, "out_range"))
+    {
+        // Already parsed in QSV initialization
     }
     else if (!strcasecmp(key, "scalingmode") ||
              !strcasecmp(key, "vpp-sm"))
@@ -4741,6 +4740,7 @@ hb_qsv_context* hb_qsv_context_init()
         return NULL;
     }
     ctx->dx_index = hb_qsv_get_default_adapter_index();
+    ctx->out_range = AVCOL_RANGE_UNSPECIFIED;
     hb_qsv_add_context_usage(ctx, 0);
     return ctx;
 }

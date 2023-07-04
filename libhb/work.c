@@ -1404,18 +1404,13 @@ static void sanitize_filter_list_pre(hb_job_t *job, hb_geometry_t src_geo)
                 (top == 0) && (bottom == 0 ) && (left == 0) && (right == 0) )
             {
 #if HB_PROJECT_FEATURE_QSV
-                if (hb_qsv_full_path_is_enabled(job))
-                {
-                    int title_bit_depth = hb_get_bit_depth(job->title->pix_fmt);
-                    int pix_fmt_bit_depth = hb_video_encoder_get_depth(job->vcodec);
-                    if (title_bit_depth == pix_fmt_bit_depth)
-                    {
-                        hb_list_rem(list, filter);
-                        hb_filter_close(&filter);
-                        hb_log("Skipping crop/scale filter");
-                    }
-                }
-                else
+                int title_bit_depth = hb_get_bit_depth(job->title->pix_fmt);
+                int pix_fmt_bit_depth = hb_video_encoder_get_depth(job->vcodec);
+                if (!hb_qsv_full_path_is_enabled(job) ||
+                    (hb_qsv_full_path_is_enabled(job) &&
+                    title_bit_depth == pix_fmt_bit_depth &&
+                    job->title->color_range == job->qsv.ctx->out_range &&
+                    job->qsv.ctx->tonemap != 1))
 #endif
                 {
                     hb_list_rem(list, filter);
@@ -1703,6 +1698,12 @@ static void do_job(hb_job_t *job)
         init.color_range = job->passthru_dynamic_hdr_metadata & DOVI &&
                             job->dovi.dv_profile == 5 ?
                             title->color_range : AVCOL_RANGE_MPEG;
+#if HB_PROJECT_FEATURE_QSV
+        if (hb_qsv_full_path_is_enabled(job))
+        {
+            init.color_range = job->qsv.ctx->out_range == AVCOL_RANGE_UNSPECIFIED ? init.color_range : job->qsv.ctx->out_range;
+        }
+#endif
         init.chroma_location = title->chroma_location;
         init.geometry = title->geometry;
         memset(init.crop, 0, sizeof(int[4]));

@@ -108,6 +108,11 @@ static int crop_scale_init(hb_filter_object_t * filter, hb_filter_init_t * init)
             hb_dict_set_string(avsettings, "format", format);
             init->pix_fmt = av_get_pix_fmt(format);
         }
+        hb_dict_set_string(avsettings, "out_range", (init->job->qsv.ctx->out_range == AVCOL_RANGE_JPEG) ? "full" : "limited");
+        if (init->job->qsv.ctx->tonemap == 1)
+        {
+            hb_dict_set_int(avsettings, "tonemap", init->job->qsv.ctx->tonemap);
+        }
         if (hb_qsv_hw_filters_via_video_memory_are_enabled(init->job))
         {
             int result = hb_create_ffmpeg_pool(init->job, width, height, init->pix_fmt, HB_QSV_POOL_SURFACE_SIZE, 0, &init->job->qsv.ctx->hb_vpp_qsv_frames_ctx->hw_frames_ctx);
